@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenAI 注册控制面板</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .log-container::-webkit-scrollbar { width: 6px; }
+        .log-container::-webkit-scrollbar-track { background: #1a202c; }
+        .log-container::-webkit-scrollbar-thumb { background: #4a5568; border-radius: 3px; }
+        .log-container { font-family: 'Fira Code', 'Cascadia Code', monospace; font-size: 0.85rem; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen p-4 md:p-8">
+    <div class="max-w-6xl mx-auto space-y-6">
+        <!-- Header & Stats -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gray-800 p-6 rounded-xl shadow-lg">
+            <div>
+                <h1 class="text-2xl font-bold text-blue-400">OpenAI 注册器</h1>
+                <p class="text-gray-400 text-sm">状态: <span id="status-badge" class="px-2 py-0.5 rounded text-xs">未知</span></p>
+            </div>
+
+            <div class="grid grid-cols-3 gap-4 text-center">
+                <div class="bg-gray-700 p-2 rounded-lg">
+                    <p class="text-xs text-gray-400 uppercase">总计</p>
+                    <p id="stat-total" class="text-xl font-bold">0</p>
+                </div>
+                <div class="bg-gray-700 p-2 rounded-lg">
+                    <p class="text-xs text-gray-400 uppercase">成功</p>
+                    <p id="stat-success" class="text-xl font-bold text-green-400">0</p>
+                </div>
+                <div class="bg-gray-700 p-2 rounded-lg">
+                    <p class="text-xs text-gray-400 uppercase">失败</p>
+                    <p id="stat-fail" class="text-xl font-bold text-red-400">0</p>
+                </div>
+            </div>
+
+            <div class="flex gap-2">
+                <button id="btn-start" onclick="toggleProcess()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-medium transition-all">启动服务</button>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Left: Logs (2/3) -->
+            <div class="lg:col-span-2 bg-gray-800 rounded-xl overflow-hidden shadow-lg flex flex-col h-[600px]">
+                <div class="bg-gray-750 px-4 py-3 border-b border-gray-700 flex justify-between items-center">
+                    <h2 class="font-semibold text-gray-300">实时日志</h2>
+                    <div class="flex items-center gap-3">
+                        <input type="text" id="proxy-input" placeholder="代理 (如 http://127.0.0.1:7890)"
+                               class="bg-gray-700 border-none rounded px-3 py-1 text-xs w-64 focus:ring-1 focus:ring-blue-500">
+                    </div>
+                </div>
+                <div id="logs" class="log-container flex-grow overflow-y-auto p-4 bg-black text-green-500 whitespace-pre-wrap">
+                    等待服务启动...
+                </div>
+            </div>
+
+            <!-- Right: Files (1/3) -->
+            <div class="bg-gray-800 rounded-xl overflow-hidden shadow-lg flex flex-col h-[600px]">
+                <div class="bg-gray-750 px-4 py-3 border-b border-gray-700 flex justify-between items-center">
+                    <h2 class="font-semibold text-gray-300">已生成的 Token</h2>
+                    <div class="flex gap-3 text-sm">
+                        <a href="/api/download_all" class="text-green-400 hover:text-green-300 underline">打包下载全部</a>
+                        <button onclick="deleteAllFiles()" class="text-red-400 hover:text-red-300 underline">删除全部</button>
+                        <button onclick="loadFiles()" class="text-blue-400 hover:text-blue-300 underline">刷新</button>
+                    </div>
+                </div>
+                <div id="file-list" class="flex-grow overflow-y-auto p-2 space-y-2">
+                    <!-- Files will be injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isRunning = false;
+        let updateInterval;
+
+        async function updateStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+
+                isRunning = data.is_running;
+
+                // Update Badge
+                const badge = document.getElementById('status-badge');
+                if (isRunning) {
+                    badge.innerText = '运行中';
+                    badge.className = 'px-2 py-0.5 rounded text-xs bg-green-900 text-green-300';
+                    document.getElementById('btn-start').innerText = '停止服务';
+                    document.getElementById('btn-start').className = 'bg-red-600 hover:bg-red-500 text-white px-6 py-2 rounded-lg font-medium transition-all';
+                    document.getElementById('proxy-input').disabled = true;
+                } else {
+                    badge.innerText = '已停止';
+                    badge.className = 'px-2 py-0.5 rounded text-xs bg-gray-700 text-gray-300';
+                    document.getElementById('btn-start').innerText = '启动服务';
+                    document.getElementById('btn-start').className = 'bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-lg font-medium transition-all';
+                    document.getElementById('proxy-input').disabled = false;
+                }
+
+                // Update Stats
+                document.getElementById('stat-total').innerText = data.stats.total;
+                document.getElementById('stat-success').innerText = data.stats.success;
+                document.getElementById('stat-fail').innerText = data.stats.fail;
+
+                // Update Logs
+                const logsDiv = document.getElementById('logs');
+                if (data.logs.length > 0) {
+                    logsDiv.innerText = data.logs.join('\n');
+                }
+            } catch (error) {
+                console.error('Failed to fetch status:', error);
+            }
+        }
+
+        async function toggleProcess() {
+            const btn = document.getElementById('btn-start');
+            btn.disabled = true;
+
+            if (!isRunning) {
+                const proxy = document.getElementById('proxy-input').value;
+                await fetch(`/api/start?proxy=${encodeURIComponent(proxy)}`, { method: 'POST' });
+            } else {
+                await fetch('/api/stop', { method: 'POST' });
+            }
+
+            setTimeout(() => { btn.disabled = false; updateStatus(); }, 500);
+        }
+
+        async function deleteAllFiles() {
+            if (!confirm('确定要删除所有生成的 Token 文件吗？此操作不可恢复。')) return;
+            try {
+                await fetch('/api/delete_all', { method: 'POST' });
+                loadFiles();
+            } catch (error) {
+                console.error('Failed to delete files:', error);
+            }
+        }
+
+        async function loadFiles() {
+            try {
+                const response = await fetch('/api/files');
+                const files = await response.json();
+
+                const list = document.getElementById('file-list');
+                list.innerHTML = files.map(f => `
+                    <div class="bg-gray-700 p-3 rounded-lg flex justify-between items-center group">
+                        <div class="overflow-hidden">
+                            <p class="text-sm font-medium truncate text-gray-200">${f.name}</p>
+                            <p class="text-[10px] text-gray-400">${f.time} · ${f.size}</p>
+                        </div>
+                        <a href="/download/${f.name}" download
+                           class="bg-blue-600/20 text-blue-400 px-3 py-1 rounded text-xs group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                            下载
+                        </a>
+                    </div>
+                `).join('');
+                if (files.length === 0) list.innerHTML = '<p class="text-center text-gray-500 py-10 text-sm">暂无生成的文件</p>';
+            } catch (error) {
+                console.error('Failed to load files:', error);
+            }
+        }
+
+        // Auto-refresh stats and logs
+        setInterval(updateStatus, 2000);
+        setInterval(loadFiles, 5000);
+
+        // Initial load
+        updateStatus();
+        loadFiles();
+    </script>
+</body>
+</html>
